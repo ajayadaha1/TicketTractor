@@ -1,0 +1,5 @@
+[
+  { "value": "S1", "label": "Stage 1 - Initial" },
+  { "value": "S2", "label": "Stage 2 - Extended" },
+  { "value": "S3", "label": "Stage 3 - Final" }
+]

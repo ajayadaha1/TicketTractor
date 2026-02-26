@@ -1,0 +1,5 @@
+[
+  { "value": "F1", "label": "Flow 1 - Standard" },
+  { "value": "F2", "label": "Flow 2 - Stress" },
+  { "value": "F3", "label": "Flow 3 - Debug" }
+]

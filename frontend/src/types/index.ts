@@ -47,3 +47,15 @@ export interface UserInfo {
   email: string;
   avatar_url: string;
 }
+
+export interface AuditEntry {
+  timestamp: string;
+  epoch: number;
+  user_name: string;
+  user_email: string;
+  ticket_key: string;
+  action: string;
+  label: string;
+  comment: string;
+  details: string;
+}

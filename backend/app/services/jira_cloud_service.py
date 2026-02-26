@@ -98,11 +98,11 @@ class JiraCloudService:
     def build_label(stage: str, flow: str, result: str, failing_cmd: str) -> str:
         """Build the results label string.
 
-        Format: results_<Stage><Flow><Result>
-        If failing_cmd is empty, append 'X'.
-        Example: results_S1F2R3 or results_S1F2R3X
+        Format: results_<Stage>-<Flow>-<Result>
+        If failing_cmd is empty, append '-X'.
+        Example: results_S1-F2-R3 or results_S1-F2-R3-X
         """
-        label = f"results_{stage}{flow}{result}"
+        label = f"results_{stage}-{flow}-{result}"
         if not failing_cmd or not failing_cmd.strip():
-            label += "X"
+            label += "-X"
         return label

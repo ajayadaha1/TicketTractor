@@ -19,11 +19,12 @@ export default function Layout() {
   const { user, clearAuth } = useAuthStore();
 
   // Determine active tab from current path
-  const currentTab = location.pathname === '/analytics' ? 1 : 0;
+  const tabMap: Record<string, number> = { '/': 0, '/analytics': 1, '/history': 2 };
+  const currentTab = tabMap[location.pathname] ?? 0;
 
   const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
-    if (newValue === 0) navigate('/');
-    if (newValue === 1) navigate('/analytics');
+    const paths = ['/', '/analytics', '/history'];
+    navigate(paths[newValue]);
   };
 
   const handleLogout = async () => {
@@ -47,6 +48,7 @@ export default function Layout() {
           >
             <Tab label="Ticket Updater" />
             <Tab label="Analytics" />
+            <Tab label="History" />
           </Tabs>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>

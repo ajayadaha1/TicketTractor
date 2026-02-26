@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,8 +15,10 @@ from ..schemas.ticket import (
     TicketUpdateResult,
 )
 from ..services.atlassian_auth import AtlassianAuthService
+from ..services.audit import record_action, get_history
 from ..services.jira_cloud_service import JiraCloudService
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
 
@@ -99,6 +102,9 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
     session = await _get_session(request)
     cloud_id = session["cloud_id"]
     access_token = session["access_token"]
+    user_info = session.get("user_info", {})
+    user_name = user_info.get("name", "Unknown")
+    user_email = user_info.get("email", "")
 
     results = []
     for ticket in body.tickets:
@@ -107,26 +113,48 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
             new_label = JiraCloudService.build_label(
                 ticket.stage, ticket.flow, ticket.result, ticket.failing_cmd or ""
             )
+            logger.info(
+                f"[{ticket.ticket_key}] Input: stage={ticket.stage!r}, flow={ticket.flow!r}, "
+                f"result={ticket.result!r}, failing_cmd={ticket.failing_cmd!r} => label={new_label!r}"
+            )
 
             # Get current labels
             current_labels = await JiraCloudService.get_issue_labels(
                 cloud_id, access_token, ticket.ticket_key
             )
+            logger.info(f"[{ticket.ticket_key}] Current labels: {current_labels}")
 
             # Handle label update based on action
             if ticket.label_action == "replace":
-                # Remove existing results_ labels, add the new one
+                removed = [l for l in current_labels if l.startswith("results_")]
                 updated_labels = [l for l in current_labels if not l.startswith("results_")]
                 updated_labels.append(new_label)
             else:
-                # Add new label alongside existing ones
+                removed = []
                 updated_labels = list(current_labels)
                 if new_label not in updated_labels:
                     updated_labels.append(new_label)
 
+            logger.info(f"[{ticket.ticket_key}] Updating labels to: {updated_labels}")
+
             # Update labels on the issue
             await JiraCloudService.update_issue_labels(
                 cloud_id, access_token, ticket.ticket_key, updated_labels
+            )
+
+            # Record audit: label update
+            details_parts = [f"action={ticket.label_action}"]
+            if removed:
+                details_parts.append(f"replaced={removed}")
+            if ticket.failing_cmd:
+                details_parts.append(f"failing_cmd={ticket.failing_cmd}")
+            record_action(
+                user_name=user_name,
+                user_email=user_email,
+                ticket_key=ticket.ticket_key,
+                action="label_update",
+                label=new_label,
+                details="; ".join(details_parts),
             )
 
             # Add comment if provided
@@ -136,6 +164,13 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
                     cloud_id, access_token, ticket.ticket_key, ticket.comment
                 )
                 comment_added = True
+                record_action(
+                    user_name=user_name,
+                    user_email=user_email,
+                    ticket_key=ticket.ticket_key,
+                    action="comment_added",
+                    comment=ticket.comment,
+                )
 
             results.append(TicketUpdateResult(
                 ticket_key=ticket.ticket_key,
@@ -144,6 +179,13 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
                 comment_added=comment_added,
             ))
         except Exception as e:
+            record_action(
+                user_name=user_name,
+                user_email=user_email,
+                ticket_key=ticket.ticket_key,
+                action="update_failed",
+                details=str(e),
+            )
             results.append(TicketUpdateResult(
                 ticket_key=ticket.ticket_key,
                 success=False,
@@ -157,3 +199,10 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
         successful=successful,
         failed=len(results) - successful,
     )
+
+
+@router.get("/history")
+async def get_audit_history(request: Request, limit: int = 200, offset: int = 0):
+    """Get audit trail of all ticket updates."""
+    await _get_session(request)
+    return get_history(limit=limit, offset=offset)

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { DropdownConfig, LabelCheckResult, BulkUpdateResponse, TicketEntry } from '../types';
+import { DropdownConfig, LabelCheckResult, BulkUpdateResponse, TicketEntry, AuditEntry } from '../types';
 
 const API_BASE_URL = '/ticket-tractor-api';
 
@@ -92,6 +92,14 @@ class ApiService {
       { tickets: payload },
       { timeout: 120000 }
     );
+    return response.data;
+  }
+
+  // Audit history
+  async getHistory(limit = 200, offset = 0): Promise<{ entries: AuditEntry[]; total: number }> {
+    const response = await this.client.get('/api/tickets/history', {
+      params: { limit, offset },
+    });
     return response.data;
   }
 }

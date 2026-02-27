@@ -4,7 +4,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import LoginPage from './components/LoginPage';
 import TicketUpdaterPage from './components/TicketUpdaterPage';
 import AnalyticsPage from './components/AnalyticsPage';
-import HistoryPage from './components/HistoryPage';
+import ChangeGearPage from './components/ChangeGearPage';
 import Layout from './components/Layout';
 import { useAuthStore } from './services/auth';
 
@@ -52,8 +52,8 @@ function App() {
             }
           >
             <Route path="/" element={<TicketUpdaterPage />} />
+            <Route path="/changegear" element={<ChangeGearPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/history" element={<HistoryPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

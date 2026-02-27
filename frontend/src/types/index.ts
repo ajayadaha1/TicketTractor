@@ -6,7 +6,7 @@ export interface TicketEntry {
   result: string;
   failing_cmd: string;
   comment: string;
-  label_action: 'replace' | 'add';
+  label_action: 'add' | 'skip';
 }
 
 export interface DropdownOption {
@@ -22,6 +22,7 @@ export interface DropdownConfig {
 
 export interface LabelCheckResult {
   ticket_key: string;
+  new_label: string;
   existing_results_labels: string[];
   has_conflict: boolean;
 }
@@ -58,4 +59,51 @@ export interface AuditEntry {
   label: string;
   comment: string;
   details: string;
+}
+
+// ── Assignee Updater types ─────────────────────────────────────────────────────
+
+export interface AssigneeUser {
+  id: number;
+  display_name: string;
+  username: string;
+  email: string;
+  is_active: boolean;
+}
+
+export interface JiraSearchUser {
+  account_id: string;
+  display_name: string;
+  email_address: string;
+  avatar_url: string;
+}
+
+export interface AssigneeTicketEntry {
+  id: string;
+  ticket_key: string;
+  assignee_username: string;
+  assignee_account_id: string;
+  comment: string;
+}
+
+export interface AssigneeUpdateResult {
+  ticket_key: string;
+  success: boolean;
+  assignee_set: string | null;
+  comment_added: boolean;
+  error: string | null;
+}
+
+export interface BulkAssigneeUpdateResponse {
+  results: AssigneeUpdateResult[];
+  total: number;
+  successful: number;
+  failed: number;
+}
+
+export interface CurrentAssigneeInfo {
+  ticket_key: string;
+  display_name: string;
+  account_id: string;
+  error?: string;
 }

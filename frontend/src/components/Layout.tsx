@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   AppBar,
@@ -10,20 +11,22 @@ import {
   Typography,
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
+import HistoryIcon from '@mui/icons-material/History';
 import { useAuthStore } from '../services/auth';
 import { apiService } from '../services/api';
+import ActivityLogDrawer from './ActivityLogDrawer';
 
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, clearAuth } = useAuthStore();
+  const [activityDrawerOpen, setActivityDrawerOpen] = useState(false);
 
-  // Determine active tab from current path
-  const tabMap: Record<string, number> = { '/': 0, '/analytics': 1, '/history': 2 };
+  const tabMap: Record<string, number> = { '/': 0, '/changegear': 1, '/analytics': 2 };
   const currentTab = tabMap[location.pathname] ?? 0;
 
   const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
-    const paths = ['/', '/analytics', '/history'];
+    const paths = ['/', '/changegear', '/analytics'];
     navigate(paths[newValue]);
   };
 
@@ -46,12 +49,21 @@ export default function Layout() {
             onChange={handleTabChange}
             sx={{ flexGrow: 1 }}
           >
-            <Tab label="Ticket Updater" />
+            <Tab label="Jira Tickets" />
+            <Tab label="ChangeGear Tickets" />
             <Tab label="Analytics" />
-            <Tab label="History" />
           </Tabs>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<HistoryIcon />}
+              onClick={() => setActivityDrawerOpen(true)}
+              sx={{ fontSize: '0.8rem' }}
+            >
+              Activity Log
+            </Button>
             {user && (
               <>
                 <Avatar
@@ -79,6 +91,11 @@ export default function Layout() {
       <Box sx={{ flexGrow: 1, p: 3 }}>
         <Outlet />
       </Box>
+
+      <ActivityLogDrawer
+        open={activityDrawerOpen}
+        onClose={() => setActivityDrawerOpen(false)}
+      />
     </Box>
   );
 }

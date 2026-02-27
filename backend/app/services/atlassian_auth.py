@@ -3,63 +3,21 @@ import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import httpx
 from jose import jwt
+from sqlalchemy import select, delete
 
 from ..config import get_settings
+from ..database import get_session_factory
+from ..models import Session
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-SESSION_FILE = Path("/app/data/sessions.json")
-
 
 class AtlassianAuthService:
     """Handles Atlassian Cloud OAuth 2.0 (3LO) authentication flow."""
-
-    # In-memory token store: session_id -> { access_token, refresh_token, cloud_id, expires_at, user_info }
-    _token_store: dict = {}
-    _loaded: bool = False
-
-    @classmethod
-    def _load_sessions(cls):
-        """Load sessions from disk on first access."""
-        if cls._loaded:
-            return
-        cls._loaded = True
-        if SESSION_FILE.exists():
-            try:
-                data = json.loads(SESSION_FILE.read_text())
-                cls._token_store.update(data)
-                logger.info(f"Loaded {len(data)} sessions from disk")
-            except Exception as e:
-                logger.warning(f"Could not load sessions from disk: {e}")
-
-    @classmethod
-    def _save_sessions(cls):
-        """Persist sessions to disk after cleaning up stale entries."""
-        cls._cleanup_sessions()
-        try:
-            SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SESSION_FILE.write_text(json.dumps(cls._token_store))
-        except Exception as e:
-            logger.warning(f"Could not save sessions to disk: {e}")
-
-    @classmethod
-    def _cleanup_sessions(cls):
-        """Remove sessions older than JWT lifetime (no valid JWT can reference them)."""
-        max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        now = time.time()
-        stale = [
-            sid for sid, s in cls._token_store.items()
-            if now - s.get("created_at", 0) > max_age
-        ]
-        for sid in stale:
-            cls._token_store.pop(sid, None)
-        if stale:
-            logger.info(f"Cleaned up {len(stale)} expired sessions")
 
     @staticmethod
     def build_authorize_url() -> str:
@@ -160,25 +118,29 @@ class AtlassianAuthService:
             }
 
     @classmethod
-    def create_session(
+    async def create_session(
         cls, access_token: str, refresh_token: str, expires_in: int,
         cloud_id: str, user_info: dict
     ) -> str:
-        """Create a session and return a JWT session token."""
-        cls._load_sessions()
+        """Create a session in PostgreSQL and return a JWT session token."""
         session_id = secrets.token_urlsafe(32)
         expires_at = time.time() + expires_in
 
-        cls._token_store[session_id] = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "cloud_id": cloud_id,
-            "expires_at": expires_at,
-            "created_at": time.time(),
-            "user_info": user_info,
-        }
+        async with get_session_factory()() as db:
+            db_session = Session(
+                session_id=session_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                cloud_id=cloud_id,
+                expires_at=expires_at,
+                created_at=time.time(),
+                user_info=json.dumps(user_info),
+            )
+            db.add(db_session)
+            await db.commit()
 
-        cls._save_sessions()
+        # Cleanup stale sessions (fire-and-forget)
+        await cls._cleanup_sessions()
 
         # Create a JWT that encodes the session_id
         jwt_payload = {
@@ -191,46 +153,76 @@ class AtlassianAuthService:
     @classmethod
     async def get_session(cls, jwt_token: str) -> dict | None:
         """Look up a session by JWT token. Auto-refreshes if access token expired."""
-        cls._load_sessions()
         try:
             payload = jwt.decode(jwt_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             session_id = payload.get("sub")
-            if not session_id or session_id not in cls._token_store:
+            if not session_id:
                 return None
 
-            session = cls._token_store[session_id]
+            async with get_session_factory()() as db:
+                result = await db.execute(
+                    select(Session).where(Session.session_id == session_id)
+                )
+                db_session = result.scalar_one_or_none()
+                if not db_session:
+                    return None
 
-            # Auto-refresh if access token is expired (with 60s margin)
-            if time.time() > session["expires_at"] - 60:
-                if session.get("refresh_token"):
-                    try:
-                        tokens = await cls.refresh_access_token(session["refresh_token"])
-                        session["access_token"] = tokens["access_token"]
-                        if "refresh_token" in tokens:
-                            session["refresh_token"] = tokens["refresh_token"]
-                        session["expires_at"] = time.time() + tokens.get("expires_in", 3600)
-                        cls._save_sessions()
-                    except Exception:
-                        # Refresh failed, session is invalid
-                        cls._token_store.pop(session_id, None)
-                        cls._save_sessions()
-                        return None
+                # Auto-refresh if access token is expired (with 60s margin)
+                if time.time() > db_session.expires_at - 60:
+                    if db_session.refresh_token:
+                        try:
+                            tokens = await cls.refresh_access_token(db_session.refresh_token)
+                            db_session.access_token = tokens["access_token"]
+                            if "refresh_token" in tokens:
+                                db_session.refresh_token = tokens["refresh_token"]
+                            db_session.expires_at = time.time() + tokens.get("expires_in", 3600)
+                            await db.commit()
+                        except Exception:
+                            # Refresh failed, session is invalid
+                            await db.delete(db_session)
+                            await db.commit()
+                            return None
 
-            return session
+                return {
+                    "access_token": db_session.access_token,
+                    "refresh_token": db_session.refresh_token,
+                    "cloud_id": db_session.cloud_id,
+                    "expires_at": db_session.expires_at,
+                    "created_at": db_session.created_at,
+                    "user_info": json.loads(db_session.user_info),
+                }
         except Exception:
             return None
 
     @classmethod
-    def invalidate_session(cls, jwt_token: str) -> bool:
+    async def invalidate_session(cls, jwt_token: str) -> bool:
         """Invalidate a session by removing it from the store."""
-        cls._load_sessions()
         try:
             payload = jwt.decode(jwt_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             session_id = payload.get("sub")
             if session_id:
-                cls._token_store.pop(session_id, None)
-                cls._save_sessions()
+                async with get_session_factory()() as db:
+                    await db.execute(
+                        delete(Session).where(Session.session_id == session_id)
+                    )
+                    await db.commit()
                 return True
         except Exception:
             pass
         return False
+
+    @classmethod
+    async def _cleanup_sessions(cls):
+        """Remove sessions older than JWT lifetime."""
+        max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        cutoff = time.time() - max_age
+        try:
+            async with get_session_factory()() as db:
+                result = await db.execute(
+                    delete(Session).where(Session.created_at < cutoff)
+                )
+                if result.rowcount > 0:
+                    logger.info(f"Cleaned up {result.rowcount} expired sessions")
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"Session cleanup failed: {e}")

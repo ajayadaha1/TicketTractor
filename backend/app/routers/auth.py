@@ -64,7 +64,7 @@ async def atlassian_callback(code: str, state: str | None = None):
             }
 
         # Create session
-        session_token = AtlassianAuthService.create_session(
+        session_token = await AtlassianAuthService.create_session(
             access_token=access_token,
             refresh_token=refresh_token,
             expires_in=expires_in,
@@ -114,5 +114,5 @@ async def logout(request: Request):
     body = await request.json()
     token = body.get("token")
     if token:
-        AtlassianAuthService.invalidate_session(token)
+        await AtlassianAuthService.invalidate_session(token)
     return {"message": "Successfully logged out"}

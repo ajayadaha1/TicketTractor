@@ -1,5 +1,16 @@
 import axios, { AxiosInstance } from 'axios';
-import { DropdownConfig, LabelCheckResult, BulkUpdateResponse, TicketEntry, AuditEntry } from '../types';
+import {
+  DropdownConfig,
+  LabelCheckResult,
+  BulkUpdateResponse,
+  TicketEntry,
+  AuditEntry,
+  AssigneeUser,
+  AssigneeTicketEntry,
+  BulkAssigneeUpdateResponse,
+  CurrentAssigneeInfo,
+  JiraSearchUser,
+} from '../types';
 
 const API_BASE_URL = '/ticket-tractor-api';
 
@@ -65,9 +76,16 @@ class ApiService {
   }
 
   // Ticket operations
-  async checkLabels(ticketKeys: string[]): Promise<{ results: LabelCheckResult[] }> {
+  async checkLabels(tickets: TicketEntry[]): Promise<{ results: LabelCheckResult[] }> {
+    const payload = tickets.map((t) => ({
+      ticket_key: t.ticket_key,
+      stage: t.stage,
+      flow: t.flow,
+      result: t.result,
+      failing_cmd: t.failing_cmd,
+    }));
     const response = await this.client.post('/api/tickets/check-labels', {
-      ticket_keys: ticketKeys,
+      tickets: payload,
     });
     return response.data;
   }
@@ -96,10 +114,82 @@ class ApiService {
   }
 
   // Audit history
-  async getHistory(limit = 200, offset = 0): Promise<{ entries: AuditEntry[]; total: number }> {
+  async getHistory(limit = 200, offset = 0, actions?: string[]): Promise<{ entries: AuditEntry[]; total: number }> {
+    const params: Record<string, unknown> = { limit, offset };
+    if (actions && actions.length > 0) {
+      params.actions = actions;
+    }
     const response = await this.client.get('/api/tickets/history', {
-      params: { limit, offset },
+      params,
+      paramsSerializer: (p) => {
+        const parts: string[] = [];
+        for (const [key, val] of Object.entries(p)) {
+          if (Array.isArray(val)) {
+            val.forEach((v) => parts.push(`${key}=${encodeURIComponent(v)}`));
+          } else {
+            parts.push(`${key}=${encodeURIComponent(String(val))}`);
+          }
+        }
+        return parts.join('&');
+      },
     });
+    return response.data;
+  }
+
+  // ── Assignee Users ────────────────────────────────────────────────────────
+
+  async getAssigneeUsers(): Promise<AssigneeUser[]> {
+    const response = await this.client.get('/api/assignees/users');
+    return response.data;
+  }
+
+  async addAssigneeUser(display_name: string, username: string, email: string): Promise<AssigneeUser> {
+    const response = await this.client.post('/api/assignees/users', {
+      display_name,
+      username,
+      email,
+    });
+    return response.data;
+  }
+
+  async removeAssigneeUser(userId: number): Promise<void> {
+    await this.client.delete(`/api/assignees/users/${userId}`);
+  }
+
+  // ── Assignee Bulk Update ──────────────────────────────────────────────────
+
+  async bulkUpdateAssignees(
+    tickets: AssigneeTicketEntry[]
+  ): Promise<BulkAssigneeUpdateResponse> {
+    const payload = tickets.map((t) => ({
+      ticket_key: t.ticket_key,
+      assignee_username: t.assignee_username,
+      account_id: t.assignee_account_id || undefined,
+      comment: t.comment,
+    }));
+    const response = await this.client.post(
+      '/api/assignees/update',
+      { tickets: payload },
+      { timeout: 120000 }
+    );
+    return response.data;
+  }
+
+  async searchJiraUsers(query: string): Promise<JiraSearchUser[]> {
+    const response = await this.client.get('/api/assignees/search-jira', {
+      params: { query },
+    });
+    return response.data;
+  }
+
+  async getCurrentAssignees(
+    ticketKeys: string[]
+  ): Promise<{ results: CurrentAssigneeInfo[] }> {
+    const response = await this.client.post(
+      '/api/assignees/current-assignees',
+      { ticket_keys: ticketKeys },
+      { timeout: 60000 }
+    );
     return response.data;
   }
 }

@@ -1,34 +1,14 @@
-import json
 import logging
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-from threading import Lock
+
+from sqlalchemy import select, func
+
+from ..database import get_session_factory
+from ..models import ActivityLog
 
 logger = logging.getLogger(__name__)
 
-AUDIT_FILE = Path("/app/data/audit_log.json")
-_lock = Lock()
 
-
-def _load_log() -> list[dict]:
-    if AUDIT_FILE.exists():
-        try:
-            return json.loads(AUDIT_FILE.read_text())
-        except Exception as e:
-            logger.warning(f"Could not load audit log: {e}")
-    return []
-
-
-def _save_log(entries: list[dict]):
-    try:
-        AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        AUDIT_FILE.write_text(json.dumps(entries, indent=2))
-    except Exception as e:
-        logger.warning(f"Could not save audit log: {e}")
-
-
-def record_action(
+async def record_action(
     user_name: str,
     user_email: str,
     ticket_key: str,
@@ -37,30 +17,54 @@ def record_action(
     comment: str = "",
     details: str = "",
 ):
-    """Record an audit trail entry."""
-    entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "epoch": time.time(),
-        "user_name": user_name,
-        "user_email": user_email,
-        "ticket_key": ticket_key,
-        "action": action,
-        "label": label,
-        "comment": comment,
-        "details": details,
-    }
-    with _lock:
-        entries = _load_log()
-        entries.append(entry)
-        _save_log(entries)
+    """Record an audit trail entry to PostgreSQL."""
+    async with get_session_factory()() as session:
+        entry = ActivityLog(
+            user_name=user_name,
+            user_email=user_email,
+            ticket_key=ticket_key,
+            action=action,
+            label=label,
+            comment=comment,
+            details=details,
+        )
+        session.add(entry)
+        await session.commit()
     logger.info(f"Audit: {user_name} -> {action} on {ticket_key} (label={label})")
 
 
-def get_history(limit: int = 200, offset: int = 0) -> dict:
-    """Get audit log entries, newest first."""
-    with _lock:
-        entries = _load_log()
-    entries.sort(key=lambda e: e.get("epoch", 0), reverse=True)
-    total = len(entries)
-    page = entries[offset:offset + limit]
-    return {"entries": page, "total": total}
+async def get_history(limit: int = 200, offset: int = 0, actions: list[str] | None = None) -> dict:
+    """Get audit log entries, newest first. Optionally filter by action types."""
+    async with get_session_factory()() as session:
+        # Build base filter
+        count_query = select(func.count(ActivityLog.id))
+        data_query = select(ActivityLog).order_by(ActivityLog.created_at.desc())
+
+        if actions:
+            count_query = count_query.where(ActivityLog.action.in_(actions))
+            data_query = data_query.where(ActivityLog.action.in_(actions))
+
+        # Get total count
+        count_result = await session.execute(count_query)
+        total = count_result.scalar()
+
+        # Get paginated entries
+        data_query = data_query.offset(offset).limit(limit)
+        result = await session.execute(data_query)
+        logs = result.scalars().all()
+
+    entries = [
+        {
+            "timestamp": log.created_at.isoformat() if log.created_at else "",
+            "epoch": log.created_at.timestamp() if log.created_at else 0,
+            "user_name": log.user_name,
+            "user_email": log.user_email,
+            "ticket_key": log.ticket_key,
+            "action": log.action,
+            "label": log.label or "",
+            "comment": log.comment or "",
+            "details": log.details or "",
+        }
+        for log in logs
+    ]
+    return {"entries": entries, "total": total}

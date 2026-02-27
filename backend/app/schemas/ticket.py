@@ -9,21 +9,30 @@ class TicketUpdate(BaseModel):
     result: str
     failing_cmd: Optional[str] = ""
     comment: Optional[str] = ""
-    label_action: str = "replace"  # "replace" | "add"
+    label_action: str = "add"  # "add" | "skip"
 
 
 class BulkUpdateRequest(BaseModel):
     tickets: list[TicketUpdate]
 
 
+class TicketLabelCheckItem(BaseModel):
+    ticket_key: str
+    stage: str
+    flow: str
+    result: str
+    failing_cmd: Optional[str] = ""
+
+
 class TicketLabelCheckRequest(BaseModel):
-    ticket_keys: list[str]
+    tickets: list[TicketLabelCheckItem]
 
 
 class LabelCheckResult(BaseModel):
     ticket_key: str
+    new_label: str
     existing_results_labels: list[str]
-    has_conflict: bool
+    has_conflict: bool  # True only when exact same label already exists
 
 
 class BulkLabelCheckResponse(BaseModel):

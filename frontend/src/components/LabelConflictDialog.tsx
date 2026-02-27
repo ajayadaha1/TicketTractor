@@ -13,14 +13,15 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { LabelCheckResult, TicketEntry } from '../types';
 
 interface LabelConflictDialogProps {
   open: boolean;
   conflicts: LabelCheckResult[];
   tickets: TicketEntry[];
-  onResolve: (ticketKey: string, action: 'replace' | 'add') => void;
-  onResolveAll: (action: 'replace' | 'add') => void;
+  onResolve: (ticketKey: string, action: 'add' | 'skip') => void;
+  onResolveAll: (action: 'add' | 'skip') => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -34,33 +35,29 @@ export default function LabelConflictDialog({
   onConfirm,
   onCancel,
 }: LabelConflictDialogProps) {
-  // Build new label preview for each conflicting ticket
-  const getNewLabel = (ticketKey: string): string => {
+  const getAction = (ticketKey: string): 'add' | 'skip' => {
     const ticket = tickets.find((t) => t.ticket_key === ticketKey);
-    if (!ticket) return '';
-    const base = `results_${ticket.stage}${ticket.flow}${ticket.result}`;
-    return !ticket.failing_cmd || !ticket.failing_cmd.trim() ? `${base}X` : base;
-  };
-
-  const getAction = (ticketKey: string): 'replace' | 'add' => {
-    const ticket = tickets.find((t) => t.ticket_key === ticketKey);
-    return ticket?.label_action || 'replace';
+    return ticket?.label_action === 'skip' ? 'skip' : 'add';
   };
 
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="sm" fullWidth>
-      <DialogTitle>Label Conflicts Detected</DialogTitle>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <WarningAmberIcon color="warning" />
+        Duplicate Label Detected
+      </DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          The following tickets already have results labels. Choose how to handle each:
+          The following tickets already have the exact same label applied.
+          You can skip these tickets or continue anyway (e.g. to add a comment).
         </Typography>
 
         <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-          <Button size="small" variant="outlined" onClick={() => onResolveAll('replace')}>
-            Replace All
+          <Button size="small" variant="outlined" onClick={() => onResolveAll('skip')}>
+            Skip All
           </Button>
           <Button size="small" variant="outlined" onClick={() => onResolveAll('add')}>
-            Add All
+            Continue All
           </Button>
         </Stack>
 
@@ -71,12 +68,8 @@ export default function LabelConflictDialog({
                 primary={conflict.ticket_key}
                 secondary={
                   <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
-                    <Typography variant="caption" color="text.secondary">Existing:</Typography>
-                    {conflict.existing_results_labels.map((label) => (
-                      <Chip key={label} label={label} size="small" color="warning" variant="outlined" />
-                    ))}
-                    <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>New:</Typography>
-                    <Chip label={getNewLabel(conflict.ticket_key)} size="small" color="primary" variant="outlined" />
+                    <Typography variant="caption" color="text.secondary">Label already exists:</Typography>
+                    <Chip label={conflict.new_label} size="small" color="warning" variant="outlined" />
                   </Stack>
                 }
               />
@@ -87,8 +80,8 @@ export default function LabelConflictDialog({
                 onChange={(_, val) => val && onResolve(conflict.ticket_key, val)}
                 sx={{ mt: 1 }}
               >
-                <ToggleButton value="replace">Replace Existing</ToggleButton>
-                <ToggleButton value="add">Add New Label</ToggleButton>
+                <ToggleButton value="skip">Skip</ToggleButton>
+                <ToggleButton value="add">Continue Anyway</ToggleButton>
               </ToggleButtonGroup>
             </ListItem>
           ))}
@@ -97,7 +90,7 @@ export default function LabelConflictDialog({
       <DialogActions>
         <Button onClick={onCancel}>Cancel</Button>
         <Button variant="contained" onClick={onConfirm}>
-          Continue with Submit
+          Submit
         </Button>
       </DialogActions>
     </Dialog>

@@ -17,10 +17,10 @@ class JiraCloudService:
         }
 
     @staticmethod
-    async def get_issue(cloud_id: str, access_token: str, issue_key: str) -> dict:
-        """Get a Jira issue with labels, summary, and status fields."""
+    async def get_issue(cloud_id: str, access_token: str, issue_key: str, fields: str = "labels,summary,status") -> dict:
+        """Get a Jira issue with specified fields."""
         url = f"{JiraCloudService._base_url(cloud_id)}/issue/{issue_key}"
-        params = {"fields": "labels,summary,status"}
+        params = {"fields": fields}
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 url,
@@ -30,6 +30,14 @@ class JiraCloudService:
             )
             response.raise_for_status()
             return response.json()
+
+    @staticmethod
+    async def get_issue_assignee(cloud_id: str, access_token: str, issue_key: str) -> dict | None:
+        """Get the current assignee for a Jira issue. Returns dict with displayName/accountId or None."""
+        issue = await JiraCloudService.get_issue(
+            cloud_id, access_token, issue_key, fields="assignee"
+        )
+        return issue.get("fields", {}).get("assignee")
 
     @staticmethod
     async def get_issue_labels(cloud_id: str, access_token: str, issue_key: str) -> list[str]:
@@ -98,11 +106,61 @@ class JiraCloudService:
     def build_label(stage: str, flow: str, result: str, failing_cmd: str) -> str:
         """Build the results label string.
 
-        Format: results_<Stage>-<Flow>-<Result>
-        If failing_cmd is empty, append '-X'.
-        Example: results_S1-F2-R3 or results_S1-F2-R3-X
+        Format: results_<Stage>_<Flow>_<Result>
+        If failing_cmd is empty (after stripping underscores), append '_X'.
+        Example: results_S1_F2_R3 or results_S1_F2_R3_X
         """
-        label = f"results_{stage}-{flow}-{result}"
-        if not failing_cmd or not failing_cmd.strip():
-            label += "-X"
+        # Strip underscores from failing_cmd before evaluating
+        failing_cmd_clean = failing_cmd.replace("_", "").strip() if failing_cmd else ""
+        label = f"results_{stage}_{flow}_{result}"
+        if not failing_cmd_clean:
+            label += "_X"
         return label
+
+    @staticmethod
+    async def search_user(cloud_id: str, access_token: str, query: str) -> dict | None:
+        """Search for a Jira user by username/email query and return the first match."""
+        url = f"{JiraCloudService._base_url(cloud_id)}/user/search"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=JiraCloudService._headers(access_token),
+                params={"query": query, "maxResults": 5},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            users = response.json()
+            if users:
+                return users[0]
+            return None
+
+    @staticmethod
+    async def search_users(cloud_id: str, access_token: str, query: str, max_results: int = 10) -> list[dict]:
+        """Search for Jira users matching query. Returns all matching users."""
+        url = f"{JiraCloudService._base_url(cloud_id)}/user/search"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=JiraCloudService._headers(access_token),
+                params={"query": query, "maxResults": max_results},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    @staticmethod
+    async def assign_issue(
+        cloud_id: str, access_token: str, issue_key: str, account_id: str
+    ) -> dict:
+        """Assign an issue to a user by their accountId."""
+        url = f"{JiraCloudService._base_url(cloud_id)}/issue/{issue_key}/assignee"
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                url,
+                headers=JiraCloudService._headers(access_token),
+                json={"accountId": account_id},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            return {"status": "assigned"}
+

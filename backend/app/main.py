@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from .config import get_settings
-from .routers import auth, tickets
+from .database import init_engine, create_tables, dispose_engine
+from .routers import auth, tickets, assignees
 
 settings = get_settings()
 
@@ -11,7 +12,14 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"{settings.APP_NAME} v{settings.APP_VERSION} starting...")
+    init_engine(settings.DATABASE_URL)
+    # Import models so they're registered with Base.metadata
+    from . import models  # noqa: F401
+    await create_tables()
+    await assignees.seed_assignee_users()
+    print("Database initialized")
     yield
+    await dispose_engine()
     print(f"{settings.APP_NAME} shutting down...")
 
 
@@ -31,6 +39,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(tickets.router, prefix="/api/tickets", tags=["tickets"])
+app.include_router(assignees.router, prefix="/api/assignees", tags=["assignees"])
 
 
 @app.get("/")

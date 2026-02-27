@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..config import get_settings
 from ..schemas.ticket import (
@@ -74,22 +74,28 @@ async def get_ticket_labels(ticket_key: str, request: Request):
 
 @router.post("/check-labels", response_model=BulkLabelCheckResponse)
 async def check_labels(body: TicketLabelCheckRequest, request: Request):
-    """Bulk check which tickets already have results_ labels."""
+    """Bulk check which tickets have the exact same label already applied."""
     session = await _get_session(request)
     results = []
-    for ticket_key in body.ticket_keys:
+    for ticket in body.tickets:
         try:
-            results_labels = await JiraCloudService.get_results_labels(
-                session["cloud_id"], session["access_token"], ticket_key
+            new_label = JiraCloudService.build_label(
+                ticket.stage, ticket.flow, ticket.result, ticket.failing_cmd or ""
             )
+            results_labels = await JiraCloudService.get_results_labels(
+                session["cloud_id"], session["access_token"], ticket.ticket_key
+            )
+            # Only flag conflict when the exact new label already exists
             results.append(LabelCheckResult(
-                ticket_key=ticket_key,
+                ticket_key=ticket.ticket_key,
+                new_label=new_label,
                 existing_results_labels=results_labels,
-                has_conflict=len(results_labels) > 0,
+                has_conflict=new_label in results_labels,
             ))
-        except Exception as e:
+        except Exception:
             results.append(LabelCheckResult(
-                ticket_key=ticket_key,
+                ticket_key=ticket.ticket_key,
+                new_label="",
                 existing_results_labels=[],
                 has_conflict=False,
             ))
@@ -109,6 +115,16 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
     results = []
     for ticket in body.tickets:
         try:
+            # Skip tickets the user chose to skip (exact duplicate label)
+            if ticket.label_action == "skip":
+                results.append(TicketUpdateResult(
+                    ticket_key=ticket.ticket_key,
+                    success=True,
+                    label_applied=None,
+                    comment_added=False,
+                ))
+                continue
+
             # Build the new label
             new_label = JiraCloudService.build_label(
                 ticket.stage, ticket.flow, ticket.result, ticket.failing_cmd or ""
@@ -124,16 +140,10 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
             )
             logger.info(f"[{ticket.ticket_key}] Current labels: {current_labels}")
 
-            # Handle label update based on action
-            if ticket.label_action == "replace":
-                removed = [l for l in current_labels if l.startswith("results_")]
-                updated_labels = [l for l in current_labels if not l.startswith("results_")]
+            # Always ADD new label alongside existing ones (keep old labels)
+            updated_labels = list(current_labels)
+            if new_label not in updated_labels:
                 updated_labels.append(new_label)
-            else:
-                removed = []
-                updated_labels = list(current_labels)
-                if new_label not in updated_labels:
-                    updated_labels.append(new_label)
 
             logger.info(f"[{ticket.ticket_key}] Updating labels to: {updated_labels}")
 
@@ -144,11 +154,11 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
 
             # Record audit: label update
             details_parts = [f"action={ticket.label_action}"]
-            if removed:
-                details_parts.append(f"replaced={removed}")
             if ticket.failing_cmd:
                 details_parts.append(f"failing_cmd={ticket.failing_cmd}")
-            record_action(
+            if is_bulk:
+                details_parts.append("bulk=true")
+            await record_action(
                 user_name=user_name,
                 user_email=user_email,
                 ticket_key=ticket.ticket_key,
@@ -164,7 +174,7 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
                     cloud_id, access_token, ticket.ticket_key, ticket.comment
                 )
                 comment_added = True
-                record_action(
+                await record_action(
                     user_name=user_name,
                     user_email=user_email,
                     ticket_key=ticket.ticket_key,
@@ -179,7 +189,7 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
                 comment_added=comment_added,
             ))
         except Exception as e:
-            record_action(
+            await record_action(
                 user_name=user_name,
                 user_email=user_email,
                 ticket_key=ticket.ticket_key,
@@ -202,7 +212,16 @@ async def bulk_update_tickets(body: BulkUpdateRequest, request: Request):
 
 
 @router.get("/history")
-async def get_audit_history(request: Request, limit: int = 200, offset: int = 0):
-    """Get audit trail of all ticket updates."""
+async def get_audit_history(
+    request: Request,
+    limit: int = 200,
+    offset: int = 0,
+    actions: list[str] = Query(default=[]),
+):
+    """Get audit trail of ticket updates. Optionally filter by action types."""
     await _get_session(request)
-    return get_history(limit=limit, offset=offset)
+    return await get_history(
+        limit=limit,
+        offset=offset,
+        actions=actions if actions else None,
+    )

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # Database
+    DATABASE_URL: str = "postgresql+asyncpg://tickettractor:tickettractor_pass@localhost:5434/tickettractor"
+
     # Atlassian OAuth 2.0 (3LO)
     ATLASSIAN_CLIENT_ID: str = ""
     ATLASSIAN_CLIENT_SECRET: str = ""
